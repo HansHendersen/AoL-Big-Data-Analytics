@@ -77,9 +77,9 @@ def stacked_share(df, by, order=None, height=360):
 
 # ------------------------------------------------------------------ header
 st.title("Dashboard Keberhasilan Mahasiswa")
-st.caption("Open University Learning Analytics Dataset (OULAD) · 32.593 data mahasiswa-modul · "
-           "Distinction = lulus dengan pujian · Pass = lulus · Fail = tidak lulus · "
-           "Withdrawn = mengundurkan diri")
+st.caption("Open University Learning Analytics Dataset (OULAD) dengan 32.593 data mahasiswa-modul. "
+           "Distinction = lulus dengan pujian, Pass = lulus, Fail = tidak lulus, "
+           "Withdrawn = mengundurkan diri.")
 
 students = load("students.csv")
 if students is None:
@@ -120,20 +120,45 @@ with tab1:
         c[2].metric("Tidak lulus (Fail)", f"{share['Fail']:.1%}")
         c[3].metric("Mengundurkan diri (Withdrawn)", f"{share['Withdrawn']:.1%}")
 
-        st.subheader("Proporsi hasil akhir per modul")
-        fig, t = stacked_share(df, "code_module", order=None)
-        t["lulus"] = t["Pass"] + t["Distinction"]
-        fig.update_yaxes(categoryorder="array", categoryarray=t.sort_values("lulus").index.tolist())
-        st.plotly_chart(fig, **STRETCH)
+        col_pie, col_bar = st.columns([1, 2])
+        with col_pie:
+            st.subheader("Proporsi mahasiswa")
+            dim_map = {"Hasil akhir": "final_result", "Modul": "code_module",
+                       "Kelompok usia": "age_band", "Gender": "gender"}
+            dim = dim_map[st.selectbox("Kelompokkan berdasarkan", list(dim_map))]
+            cnt = df.groupby(dim).size().rename("jumlah").reset_index()
+            if dim == "final_result":
+                cnt = cnt.set_index(dim).reindex(ORDER).fillna(0).reset_index()
+            figp = px.pie(cnt, names=dim, values="jumlah", hole=0.4, color=dim,
+                          color_discrete_map=COLORS if dim == "final_result" else None)
+            figp.update_traces(sort=False, textinfo="percent")
+            figp.update_layout(height=296, margin=dict(l=0, r=0, t=10, b=0),
+                               legend=dict(orientation="h", y=-0.05))
+            st.plotly_chart(figp, **STRETCH)
+
+        with col_bar:
+            st.subheader("Proporsi hasil akhir per modul")
+            fig, t = stacked_share(df, "code_module", order=None, height=380)
+            t["lulus"] = t["Pass"] + t["Distinction"]
+            fig.update_yaxes(categoryorder="array", categoryarray=t.sort_values("lulus").index.tolist())
+            st.plotly_chart(fig, **STRETCH)
+
+        st.subheader("Tren hasil akhir per periode")
+        per = (df.groupby("code_presentation")["final_result"].value_counts(normalize=True)
+                 .unstack().reindex(columns=ORDER).fillna(0).sort_index())
+        lg = per.reset_index().melt(id_vars="code_presentation", var_name="Hasil", value_name="Proporsi")
+        figl = px.line(lg, x="code_presentation", y="Proporsi", color="Hasil", markers=True,
+                       color_discrete_map=COLORS,
+                       category_orders={"Hasil": ORDER, "code_presentation": list(per.index)})
+        figl.update_yaxes(tickformat=".0%", rangemode="tozero")
+        figl.update_layout(height=340, margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", y=-0.25),
+                           xaxis_title="Periode (B = mulai Februari, J = mulai Oktober)", yaxis_title=None)
+        st.plotly_chart(figl, **STRETCH)
+        wd_hi, wd_lo = per["Withdrawn"].idxmax(), per["Withdrawn"].idxmin()
+        st.caption(f"Tingkat mundur tertinggi terjadi pada periode **{wd_hi}** ({per.loc[wd_hi, 'Withdrawn']:.0%}) "
+                   f"dan terendah pada **{wd_lo}** ({per.loc[wd_lo, 'Withdrawn']:.0%}).")
 
         worst, best = t["Withdrawn"].idxmax(), t["lulus"].idxmax()
-        st.info(f"**Insight 1.** Hanya **{lulus:.1%}** mahasiswa yang lulus, sedangkan "
-                f"**{share['Withdrawn'] + share['Fail']:.1%}** tidak menyelesaikan dengan baik "
-                f"(mundur atau gagal). Mundur adalah penyebab terbesar ({share['Withdrawn']:.1%}), "
-                f"lebih besar dari gagal. Modul **{worst}** punya tingkat mundur tertinggi "
-                f"({t.loc[worst, 'Withdrawn']:.0%}); modul **{best}** punya tingkat lulus tertinggi "
-                f"({t.loc[best, 'lulus']:.0%}). Artinya, masalah utamanya adalah mahasiswa yang "
-                f"berhenti di tengah jalan, bukan mahasiswa yang gagal ujian.")
 
 # ================================================================== TAB 2
 with tab2:
@@ -152,6 +177,7 @@ with tab2:
                                          labels=bucket_order[1:]).astype(object)
             d["Terakhir aktif"] = d["Terakhir aktif"].fillna("Tidak pernah aktif")
             fig, tb = stacked_share(d, "Terakhir aktif", order=bucket_order)
+            fig.update_layout(height=620)
             st.plotly_chart(fig, **STRETCH)
 
         with right:
@@ -170,16 +196,21 @@ with tab2:
                                xaxis_title=None, yaxis_title=BEHAVIOR_ID[var])
             st.plotly_chart(fig3, **STRETCH)
 
+        st.subheader(f"Tren {BEHAVIOR_ID[var].lower()} per periode")
+        tr = df.groupby(["code_presentation", "final_result"])[var].mean().reset_index()
+        figtr = px.line(tr, x="code_presentation", y=var, color="final_result", markers=True,
+                        color_discrete_map=COLORS,
+                        category_orders={"final_result": ORDER,
+                                         "code_presentation": sorted(tr.code_presentation.unique())})
+        figtr.update_layout(height=320, margin=dict(l=0, r=0, t=10, b=0), legend_title_text="Hasil",
+                            legend=dict(orientation="h", y=-0.25), xaxis_title="Periode",
+                            yaxis_title=BEHAVIOR_ID[var])
+        st.plotly_chart(figtr, **STRETCH)
+
         no_task = tt.loc["Tidak pernah mengumpulkan tugas"] if "Tidak pernah mengumpulkan tugas" in tt.index else None
         has_task = tt.loc["Mengumpulkan ≥ 1 tugas"] if "Mengumpulkan ≥ 1 tugas" in tt.index else None
         if no_task is not None and has_task is not None:
             early = tb.loc["Hari 1–30", "Withdrawn"] if "Hari 1–30" in tb.index else float("nan")
-            st.info(f"**Insight 2.** Mahasiswa yang tidak pernah mengumpulkan tugas mundur sebesar "
-                    f"**{no_task['Withdrawn']:.0%}**, dibanding **{has_task['Withdrawn']:.0%}** pada "
-                    f"yang mengumpulkan minimal satu tugas. Mahasiswa yang terakhir aktif pada 30 hari "
-                    f"pertama mundur sebesar **{early:.0%}**. Perilaku awal semester (tidak "
-                    f"mengumpulkan tugas, berhenti membuka platform) adalah sinyal paling jelas "
-                    f"bahwa mahasiswa akan berhenti.")
 
 # ================================================================== TAB 3
 with tab3:
@@ -192,9 +223,11 @@ with tab3:
         top = trained.iloc[0]
         c = st.columns(4)
         c[0].metric("Model terbaik", top.model.split(" - ")[0])
-        c[1].metric("Akurasi", f"{top.accuracy:.1%}")
+        c[1].metric("Akurasi", f"{top.accuracy:.1%}",
+                    delta=(f"{(top.accuracy - base.accuracy.iloc[0]) * 100:+.0f} poin vs tebakan "
+                           f"kelas terbanyak" if len(base) else None))
         c[2].metric("Macro F1", f"{top.macro_f1:.2f}")
-        c[3].metric("Fitur dipakai", "15 dari 49")
+        c[3].metric("Fitur dipakai", "15 dari 49 kolom")
 
         st.subheader("Perbandingan model")
         long = mm.melt(id_vars="model", value_vars=["accuracy", "macro_f1"],
@@ -218,13 +251,6 @@ with tab3:
         fig.update_xaxes(tickformat=".0%")
         st.plotly_chart(fig, **STRETCH)
         t3 = f.head(3)
-        st.info(f"**Insight 3.** Tiga faktor paling berpengaruh adalah "
-                f"**{t3.iloc[0].Fitur.lower()}**, **{t3.iloc[1].Fitur.lower()}**, dan "
-                f"**{t3.iloc[2].Fitur.lower()}**, bersama-sama {t3.importance.sum():.0%} dari "
-                f"seluruh pengaruh. Seluruhnya adalah perilaku belajar yang bisa dipantau "
-                f"institusi selama kuliah berjalan, bukan latar belakang demografis. "
-                f"Karena itu model dapat dipakai sebagai sistem peringatan dini"
-                + (f" ({top.accuracy:.0%} akurat)." if mm is not None else "."))
 
     if need(pc, "per_class_f1.csv"):
         st.subheader("Seberapa baik model mengenali tiap kelompok?")
@@ -363,22 +389,6 @@ with tab4:
 
             diag = pd.Series({k: mix.loc[k, k] for k in ORDER})
             most, least = diag.idxmax(), diag.idxmin()
-            sim_txt = (f" Rata-rata kemiripan pasangan sehasil {sim_same:.2f}, pasangan beda hasil "
-                       f"{sim_diff:.2f}." if not np.isnan(sim_diff) else "")
-            if same > chance * 1.1:
-                lead = ("Mahasiswa yang pola belajarnya mirip cenderung berakhir sama: "
-                        f"**{same:.0%}** koneksi menghubungkan mahasiswa dengan hasil akhir yang sama, "
-                        f"dibanding **{chance:.0%}** bila acak.")
-                tail = (" Artinya, mahasiswa baru yang pola belajarnya mirip dengan mahasiswa yang mundur "
-                        "atau gagal patut dipantau lebih awal.")
-            else:
-                lead = (f"Kemiripan pola belajar tidak banyak membedakan hasil akhir: **{same:.0%}** koneksi "
-                        f"menghubungkan mahasiswa sehasil, hampir sama dengan **{chance:.0%}** bila acak.")
-                tail = (" Artinya, pola belajar saja belum cukup untuk memisahkan kelompok; perlu dipadukan "
-                        "dengan fitur lain, seperti nilai tugas dan hari terakhir aktif.")
-            st.info(f"**Insight 4.** {lead}{sim_txt} Kelompok **{most}** paling mengelompok "
-                    f"({diag[most]:.0%} temannya juga {most}), sedangkan **{least}** paling bercampur "
-                    f"({diag[least]:.0%}).{tail}")
 
         st.caption("Catatan: kemiripan dihitung 70% dari pola materi yang dibuka dan 30% dari volume klik. "
                    "Graph dibangun dari sampel mahasiswa yang seimbang per kelas (bukan proporsi populasi "
