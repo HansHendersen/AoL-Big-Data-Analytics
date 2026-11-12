@@ -1,0 +1,7 @@
+[theme]
+base = "light"
+backgroundColor = "#EEF0F3"            # latar halaman: abu-abu terang
+secondaryBackgroundColor = "#DDE2E8"   # sidebar, kartu metrik, tabel
+textColor = "#0B2A5B"                  # teks: biru tua
+primaryColor = "#1976D2"               # slider, tombol, elemen aktif
+font = "sans serif"
