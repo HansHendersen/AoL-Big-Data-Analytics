@@ -15,7 +15,8 @@ import streamlit as st
 _v = tuple(int(x) for x in st.__version__.split(".")[:2])
 STRETCH = {"width": "stretch"} if _v >= (1, 50) else {"use_container_width": True}
 
-st.set_page_config(page_title="Dashboard Keberhasilan Mahasiswa OULAD", layout="wide")
+st.set_page_config(page_title="Dashboard Keberhasilan Mahasiswa OULAD",
+                   page_icon="🎓", layout="wide")
 
 DATA = Path(__file__).parent / "dashboard_data"
 ORDER = ["Distinction", "Pass", "Fail", "Withdrawn"]
@@ -76,7 +77,7 @@ def stacked_share(df, by, order=None, height=360):
 
 
 # ------------------------------------------------------------------ header
-st.title("Dashboard Keberhasilan Mahasiswa")
+st.title("🎓 Dashboard Keberhasilan Mahasiswa")
 st.caption("Open University Learning Analytics Dataset (OULAD) · 32.593 data mahasiswa-modul · "
            "Distinction = lulus dengan pujian · Pass = lulus · Fail = tidak lulus · "
            "Withdrawn = mengundurkan diri")
@@ -120,11 +121,43 @@ with tab1:
         c[2].metric("Tidak lulus (Fail)", f"{share['Fail']:.1%}")
         c[3].metric("Mengundurkan diri (Withdrawn)", f"{share['Withdrawn']:.1%}")
 
-        st.subheader("Proporsi hasil akhir per modul")
-        fig, t = stacked_share(df, "code_module", order=None)
-        t["lulus"] = t["Pass"] + t["Distinction"]
-        fig.update_yaxes(categoryorder="array", categoryarray=t.sort_values("lulus").index.tolist())
-        st.plotly_chart(fig, **STRETCH)
+        col_pie, col_bar = st.columns([1, 2])
+        with col_pie:
+            st.subheader("Proporsi mahasiswa")
+            dim_map = {"Hasil akhir": "final_result", "Modul": "code_module",
+                       "Kelompok usia": "age_band", "Gender": "gender"}
+            dim = dim_map[st.selectbox("Kelompokkan berdasarkan", list(dim_map))]
+            cnt = df.groupby(dim).size().rename("jumlah").reset_index()
+            if dim == "final_result":
+                cnt = cnt.set_index(dim).reindex(ORDER).fillna(0).reset_index()
+            figp = px.pie(cnt, names=dim, values="jumlah", hole=0.4, color=dim,
+                          color_discrete_map=COLORS if dim == "final_result" else None)
+            figp.update_traces(sort=False, textinfo="percent")
+            figp.update_layout(height=380, margin=dict(l=0, r=0, t=10, b=0),
+                               legend=dict(orientation="h", y=-0.05))
+            st.plotly_chart(figp, **STRETCH)
+
+        with col_bar:
+            st.subheader("Proporsi hasil akhir per modul")
+            fig, t = stacked_share(df, "code_module", order=None, height=380)
+            t["lulus"] = t["Pass"] + t["Distinction"]
+            fig.update_yaxes(categoryorder="array", categoryarray=t.sort_values("lulus").index.tolist())
+            st.plotly_chart(fig, **STRETCH)
+
+        st.subheader("Tren hasil akhir per periode")
+        per = (df.groupby("code_presentation")["final_result"].value_counts(normalize=True)
+                 .unstack().reindex(columns=ORDER).fillna(0).sort_index())
+        lg = per.reset_index().melt(id_vars="code_presentation", var_name="Hasil", value_name="Proporsi")
+        figl = px.line(lg, x="code_presentation", y="Proporsi", color="Hasil", markers=True,
+                       color_discrete_map=COLORS,
+                       category_orders={"Hasil": ORDER, "code_presentation": list(per.index)})
+        figl.update_yaxes(tickformat=".0%", rangemode="tozero")
+        figl.update_layout(height=340, margin=dict(l=0, r=0, t=10, b=0), legend=dict(orientation="h", y=-0.25),
+                           xaxis_title="Periode (B = mulai Februari, J = mulai Oktober)", yaxis_title=None)
+        st.plotly_chart(figl, **STRETCH)
+        wd_hi, wd_lo = per["Withdrawn"].idxmax(), per["Withdrawn"].idxmin()
+        st.caption(f"Tingkat mundur tertinggi terjadi pada periode **{wd_hi}** ({per.loc[wd_hi, 'Withdrawn']:.0%}) "
+                   f"dan terendah pada **{wd_lo}** ({per.loc[wd_lo, 'Withdrawn']:.0%}).")
 
         worst, best = t["Withdrawn"].idxmax(), t["lulus"].idxmax()
         st.info(f"**Insight 1.** Hanya **{lulus:.1%}** mahasiswa yang lulus, sedangkan "
@@ -170,6 +203,17 @@ with tab2:
                                xaxis_title=None, yaxis_title=BEHAVIOR_ID[var])
             st.plotly_chart(fig3, **STRETCH)
 
+        st.subheader(f"Tren {BEHAVIOR_ID[var].lower()} per periode")
+        tr = df.groupby(["code_presentation", "final_result"])[var].mean().reset_index()
+        figtr = px.line(tr, x="code_presentation", y=var, color="final_result", markers=True,
+                        color_discrete_map=COLORS,
+                        category_orders={"final_result": ORDER,
+                                         "code_presentation": sorted(tr.code_presentation.unique())})
+        figtr.update_layout(height=320, margin=dict(l=0, r=0, t=10, b=0), legend_title_text="Hasil",
+                            legend=dict(orientation="h", y=-0.25), xaxis_title="Periode",
+                            yaxis_title=BEHAVIOR_ID[var])
+        st.plotly_chart(figtr, **STRETCH)
+
         no_task = tt.loc["Tidak pernah mengumpulkan tugas"] if "Tidak pernah mengumpulkan tugas" in tt.index else None
         has_task = tt.loc["Mengumpulkan ≥ 1 tugas"] if "Mengumpulkan ≥ 1 tugas" in tt.index else None
         if no_task is not None and has_task is not None:
@@ -192,9 +236,11 @@ with tab3:
         top = trained.iloc[0]
         c = st.columns(4)
         c[0].metric("Model terbaik", top.model.split(" - ")[0])
-        c[1].metric("Akurasi", f"{top.accuracy:.1%}")
+        c[1].metric("Akurasi", f"{top.accuracy:.1%}",
+                    delta=(f"{(top.accuracy - base.accuracy.iloc[0]) * 100:+.0f} poin vs tebakan "
+                           f"kelas terbanyak" if len(base) else None))
         c[2].metric("Macro F1", f"{top.macro_f1:.2f}")
-        c[3].metric("Fitur dipakai", "15 dari 49")
+        c[3].metric("Fitur dipakai", "15 dari 49 kolom")
 
         st.subheader("Perbandingan model")
         long = mm.melt(id_vars="model", value_vars=["accuracy", "macro_f1"],
